@@ -268,19 +268,11 @@ for (i in 1:nrow(tripAveByGT)) {
 
 ### Rainfall plots
 
-```{r waterfall}
+```{r rainfall}
 seqNames <- seqnames(Ggallus)[c(1:29, 31, 32)]
 seqLengths <-  seqlengths(Ggallus)[c(1:29, 31, 32)]
 cumulativeLengths <- Reduce(sum, seqLengths, accumulate = TRUE)
 genomeLength <- sum(seqLengths)
-
-normalizeGenomicPositions <- function(chr, pos) {
-  chr <- paste0("chr", chr)
-  pos <- as.numeric(pos)
-  whichChrom <- which(seqNames %in% chr)
-  earlierChromsLength <- sum(seqLengths[0:(whichChrom - 1)])
-  return(as.numeric(earlierChromsLength) + pos)
-}
 
 snv_filt <- arrange(snv_filt, sample, chr, pos) %>%
   mutate(nextmut = c(pos[-1], NA) - pos,
@@ -288,7 +280,7 @@ snv_filt <- arrange(snv_filt, sample, chr, pos) %>%
          refalt = paste0(ref, ">", mut),
          coloring = as.numeric(factor(substr(sorting, 0, 3), levels = c("C>A", "C>G", "C>T", "T>A", "T>C", "T>G"))))
 
-snv_filt$normPos <- apply(snv_filt, 1, function(x) normalizeGenomicPositions(x[2], x[3]))
+snv_filt$normPos <- apply(snv_filt, 1, function(x) normalizeGenomicPositions(x[2], x[3], Ggallus, c(1:29, 31, 32)))
 
 paste0("mkdir ", outDir, "/rainfall_plots/") %>% system()
 
@@ -410,57 +402,30 @@ The context files for the deletions and insertions will contain four columns eac
 
 ```{r indel.context}
 #for the filtered insertions belonging to R10 samples
-ins_r8b <- ins_filt
 
-with(ins_r8b, GRanges(paste0("chr", chr), ranges = IRanges(pos - 50, end = pos + 50))) %>%
+with(ins_filt, GRanges(paste0("chr", chr), ranges = IRanges(pos - 50, end = pos + 50))) %>%
   getSeq(Ggallus, .) %>%
   as.character() -> ins_cont
 
-ins_context <- data.frame(Sample = ins_r8b$sample, Chr = ins_r8b$chr, Pos = ins_r8b$pos, Prev50to2 = substr(ins_cont, 1, 50), Prev1 = substr(ins_cont, 51, 51), Inserted = ins_r8b$mut, Next50 = substr(ins_cont, 52, 101))
+ins_context <- data.frame(Sample = ins_filt$sample, Chr = ins_filt$chr, Pos = ins_filt$pos, Prev50to2 = substr(ins_cont, 1, 50), Prev1 = substr(ins_cont, 51, 51), Inserted = ins_filt$mut, Next50 = substr(ins_cont, 52, 101))
 write.table(ins_context, file = paste0(file.path(outDir, outBase), "_insertion_context.csv"), quote = FALSE, row.names = FALSE)
 
-#for the filtered deletions belonging to R10 samples
-del_r8b <- del_filt 
-
-with(del_r8b, GRanges(paste0("chr", chr), ranges = IRanges(pos + nchar(as.character(ref)) + 1, end = pos + nchar(as.character(ref)) + 50))) %>%
+with(del_filt, GRanges(paste0("chr", chr), ranges = IRanges(pos + nchar(as.character(ref)) + 1, end = pos + nchar(as.character(ref)) + 50))) %>%
   getSeq(Ggallus, .) %>%
   as.character() -> del_after
-with(del_r8b, GRanges(paste0("chr", chr), ranges = IRanges(pos - 50, end = pos))) %>%
+with(del_filt, GRanges(paste0("chr", chr), ranges = IRanges(pos - 50, end = pos))) %>%
   getSeq(Ggallus, .) %>%
   as.character() -> del_before
 
-del_context <- data.frame(Sample = del_r8b$sample, Genotype = del_r8b$genotype, Treatment = del_r8b$treatment, Chr = del_r8b$chr, Pos = del_r8b$pos, Prev50to2 = substr(del_before, 1, 50), Prev1 = substr(del_before, 51, 51), Deleted = del_r8b$ref, Next50 = del_after)
+del_context <- data.frame(Sample = del_filt$sample, Genotype = del_filt$genotype, Treatment = del_rdel_filt8b$treatment, Chr = del_filt$chr, Pos = del_filt$pos, Prev50to2 = substr(del_before, 1, 50), Prev1 = substr(del_before, 51, 51), Deleted = del_filt$ref, Next50 = del_after)
 ```
 
 ```{r del.categories}
-delClassifier <- function(deleted, upstream) {
-  if (length(deleted) != length(upstream)) {
-    print("Sequence vectors have to be of equal length!")
-  }
-  ret <- vector(length = length(deleted))
-  deleted <- as.character(deleted)
-  upstream <- as.character(upstream)
-  for (i in 1:length(deleted)) {
-    ret[i] <- ifelse(
-      substr(upstream[i], 1, nchar(deleted[i])) == deleted[i],
-      "repeat",
-      ifelse(
-        substr(upstream[i], 1, 1) == substr(deleted[i], 1, 1),
-        "homology",
-        "no homology"
-      )
-    )
-  }
-  return(ret)
-}
-
 del_context$Category <- with(del_context, delClassifier(Deleted, Next50))
 with(del_context, ftable(Category ~ Genotype + Treatment))
 with(del_context, ftable(Category ~ Sample))
 write.table(del_context, file = paste0(file.path(outDir, outBase), "_deletion_context.csv"), quote = FALSE, row.names = FALSE)
-```
 
-```{r}
 filter(del_context,  Treatment != "starting_clone") %>% 
   group_by(Sample, Genotype, Treatment, Category) %>% 
   summarize(Sum = n()) %>%
@@ -468,11 +433,6 @@ filter(del_context,  Treatment != "starting_clone") %>%
   summarize(Mean = mean(Sum), SEM = sd(Sum) / sqrt(n())) %>% 
   ggplot(aes(x = gsub(" ", "\n", Treatment), y = Mean, fill = Category)) + geom_bar(stat = 'identity', position = position_dodge()) + geom_errorbar(aes(ymin = Mean - SEM, ymax = Mean + SEM), position = position_dodge(width = 0.9), width = 0.5) + theme_bw() + xlab("") + ylab("Count") + ggtitle("Means and SEMs of deletion categories") + theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))
 
-filter(del_context, Genotype != "POLK", Treatment != "starting_clone") %>% 
+filter(del_context, Treatment != "starting_clone") %>% 
   ggplot(aes(x = Treatment, y = nchar(Deleted), group = Category, color = Category)) + geom_point(position = position_jitterdodge(jitter.width = 0.2, jitter.height = 0.5, dodge.width = 0.7)) + theme_minimal() + ylab("Length of deletions") + xlab("Genotype") + ggtitle("Categories and lengths together") + theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))
 ```
-
-
-
-
-
