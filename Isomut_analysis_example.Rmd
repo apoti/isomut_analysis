@@ -1,7 +1,7 @@
 ---
-title: "R20_Results.Rmd"
-author: "Poti Adam"
-date: "12 December 2018"
+title: "Isomut_analysis_example"
+author: "Me"
+date: "Date"
 output: 
     html_notebook:
       fig.height: 5
@@ -11,6 +11,10 @@ output:
       toc_float: yes
 ---
 
+## Introduction
+
+This R notebook will make a quick general analysis of an Isomut output file. It assumes that we use the trick with the isomut_wrappers_mod.py. If it's not the case, change the isomut SNV output file accordingly. 
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
@@ -18,40 +22,27 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r setup2, warning = FALSE, message = FALSE}
 options(stringsAsFactors = FALSE)
 
-library(dplyr)
-library(reshape2)
-library(ggplot2)
+library(tidyverse)
 library(BSgenome.Ggallus.UCSC.galGal4)
 
 # most important user-defined variables: working directory, output base name and sample-specific genotype and treatment info
 # these are the only things you have to change for each Isomut run.
 
-outDir <- "20181211_isomut_output/"
-outBase <- "R20"
+outDir <- "isomut_output/"
+outBase <- "MyOutBase"
 # treatments
 treat_list <- list(
-starting_clone = c("DS041"),
-mock = c("DS042", "DS043", "DS044"),
-cisplatin_10uM_R3 = c("DS003", "DS048", "DS049"),
-cisplatin_10uM_R20= c("DS428", "DS429", "DS430"),
-cisplatin_7.5uM_R19 = c("DS419", "DS420", "DS421"),
-carboplatin_110uM_R19 = c("DS425", "DS426", "DS427"),
-carboplatin_75uM_R10 = c("DS260", "DS261", "DS262"),
-carboplatin_75uM_R20 = c("DS431", "DS432", "DS433"),
-oxaliplatin_4.5uM_R19 = c("DS422", "DS423", "DS424"),
-oxaliplatin_2.5uM_R10 = c("DS263", "DS264", "DS265"),
-oxaliplatin_2.5uM_R20 = c("DS434", "DS435", "DS436")
+
 )
 
 
 
 # genotypes
 geno_list <- list(
-  WT = c("DS434", "DS435", "DS436", "DS263", "DS264", "DS265", "DS422", "DS423", "DS424", "DS431", "DS432", "DS433", "DS260", "DS261", "DS262", "DS425", "DS426", "DS427", "DS428", "DS429", "DS430", "DS419", "DS420", "DS421", "DS003", "DS048", "DS049", "DS042", "DS043", "DS044", "DS041")
+
 )
 
-
-
+# we can later put here any starting clones that seem to be contaminated
 problematic <- c()
 ```
 
@@ -76,13 +67,15 @@ snv$sample <- substr(snv$X.sample_name, 0, 5)
 samplenum <- length(table(snv$X.sample_name))
 
 csnv <- matrix(0, ncol = samplenum, nrow = 301)
-for (i in 1:301) { csnv[i,] <- as.vector(tabulate(factor(filter(snv, score > (i-1)/10)$X.sample_name, levels = names(table(snv$X.sample_name))), nbins = samplenum)) }
+for (i in 1:301) { 
+  csnv[i,] <- as.vector(tabulate(factor(filter(snv, score > (i-1)/10)$X.sample_name, levels = names(table(snv$X.sample_name))), nbins = samplenum)) 
+}
 csnv <- data.frame(csnv, stringsAsFactors = FALSE)
 names(csnv) <- names(table(substr(snv$X.sample_name, 0, 5)))
 csnv$treshold <- seq(0, 30, by = 0.1)
-csnvm <- melt(csnv, id = "treshold")
-csnvm$status <- ifelse(csnvm$variable %in% setdiff(treat_list$starting_clone, problematic), "starting clone", "other")
-ggplot(data = csnvm, aes(x = treshold, y = log(value, base = 10), group = variable, color = status)) + geom_line() + ylab("log10 (Mutation number) ") + xlab("Score treshold") + geom_hline(yintercept = log10(5), linetype = 2)
+csnvm <- gather(csnv, Sample, Count, -treshold)
+csnvm$Status <- ifelse(csnvm$Sample %in% setdiff(treat_list$starting_clone, problematic), "starting clone", "other")
+ggplot(data = csnvm, aes(x = treshold, y = log(Count, base = 10), group = Sample, color = Status)) + geom_line() + ylab("log10 (Mutation number) ") + xlab("Score treshold") + geom_hline(yintercept = log10(5), linetype = 2)
 write.csv(csnv, paste0(file.path(outDir, outBase), "_snv_tresholds.csv"), quote = FALSE, row.names = FALSE) 
 ```
 
@@ -97,14 +90,16 @@ samplenum <- length(table(indel$X.sample_name))
 
 ins <- filter(indel, type == "INS")
 cins <- matrix(0, ncol = samplenum, nrow = 201)
-for (i in 1:201) { cins[i,] <- as.vector(tabulate(factor(filter(ins, score > (i-1)/10)$X.sample_name, levels = names(table(ins$X.sample_name))), nbins = samplenum)) }
+for (i in 1:201) { 
+  cins[i,] <- as.vector(tabulate(factor(filter(ins, score > (i-1)/10)$X.sample_name, levels =   names(table(ins$X.sample_name))), nbins = samplenum)) 
+}
 cins <- data.frame(cins, stringsAsFactors = FALSE)
 names(cins) <- names(table(substr(indel$X.sample_name, 0, 5)))
 cins$treshold <- seq(0, 20, by = 0.1)
-cinsm <- melt(cins, id = "treshold")
-cinsm$status <- ifelse(cinsm$variable %in% setdiff(treat_list$starting_clone, problematic), "starting clone", "other")
+cinsm <- gather(cins, Sample, Count, -treshold)
+cinsm$Status <- ifelse(cinsm$Sample %in% setdiff(treat_list$starting_clone, problematic), "starting clone", "other")
 
-ggplot(data = cinsm, aes(x = treshold, y = log(value, base = 10), group = variable, color = status)) + geom_line() + ylab("log10 (Insertion number)") + xlab("Score treshold") + geom_hline(yintercept = log10(1), linetype = 2)
+ggplot(data = cinsm, aes(x = treshold, y = log(Count, base = 10), group = Sample, color = Status)) + geom_line() + ylab("log10 (Insertion number)") + xlab("Score treshold") + geom_hline(yintercept = log10(1), linetype = 2)
 write.csv(cins, paste0(file.path(outDir, outBase), "_ins_tresholds.csv"), quote = FALSE, row.names = FALSE) 
 ```
 The treshold will be that lowest Fisher score that leaves at most 1 event in each starting clone samples. For insertions, it is `r cins[ ,c(setdiff(treat_list$starting_clone, problematic), "treshold")] %>% apply(1, function(x) ifelse(sum(x[1:length(setdiff(treat_list$starting_clone, problematic))] <= 1) == length(setdiff(treat_list$starting_clone, problematic)), x[length(setdiff(treat_list$starting_clone, problematic)) + 1], NA)) %>% min(na.rm = TRUE)`. 
@@ -123,9 +118,9 @@ for (i in 1:201) { cdel[i,] <- as.vector(tabulate(factor(filter(del, score > (i-
 cdel <- data.frame(cdel, stringsAsFactors = FALSE)
 names(cdel) <- names(table(substr(indel$X.sample_name, 0, 5)))
 cdel$treshold <- seq(0, 20, by = 0.1)
-cdelm <- melt(cdel, id = "treshold")
-cdelm$status <- ifelse(cdelm$variable %in% setdiff(treat_list$starting_clone, problematic), "starting clone", "other")
-ggplot(data = cdelm, aes(x = treshold, y = log(value, base = 10), group = variable, color = status)) + geom_line() + ylab("log10 (Deletion number) ") + xlab("Score treshold") + geom_hline(yintercept = log10(1), linetype = 2)
+cdelm <-  gather(cdel, Sample, Count, -treshold)
+cdelm$status <- ifelse(cdelm$Sample %in% setdiff(treat_list$starting_clone, problematic), "starting clone", "other")
+ggplot(data = cdelm, aes(x = treshold, y = log(Count, base = 10), group = Sample, color = status)) + geom_line() + ylab("log10 (Deletion number) ") + xlab("Score treshold") + geom_hline(yintercept = log10(1), linetype = 2)
 write.csv(cdel, paste0(file.path(outDir, outBase), "_del_tresholds.csv"), quote = FALSE, row.names = FALSE)
 ```
 The treshold will be that lowest Fisher score that leaves at most 1 event in each starting clone samples. For deletions, it is `r cdel[ ,c(setdiff(treat_list$starting_clone, problematic), "treshold")] %>% apply(1, function(x) ifelse(sum(x[1:length(setdiff(treat_list$starting_clone, problematic))] <= 1) == length(setdiff(treat_list$starting_clone, problematic)), x[length(setdiff(treat_list$starting_clone, problematic)) + 1], NA)) %>% min(na.rm = TRUE)`. 
@@ -142,12 +137,10 @@ snvScore <- csnv[ ,c(setdiff(treat_list$starting_clone, problematic), "treshold"
   min(na.rm = TRUE)
 
 snv_filt <- filter(snv, score > snvScore, chr != "MT")
-#DS434 is heavily contaminated. For now I just remove it from the dataset.
-snv_filt <- filter(snv_filt, sample != "DS434")
 snv_filt$sample <- substr(snv_filt$X.sample_name, 0, 5)
 factor(snv_filt$sample, levels = sort(unique(snv$sample))) %>% 
-tabulate() %>% 
-barplot(las = 2, names.arg = sort(unique(snv$sample)), ylab = paste0("Number of SNVs with score >= ", snvScore))
+  tabulate() %>% 
+  barplot(las = 2, names.arg = sort(unique(snv$sample)), ylab = paste0("Number of SNVs with score >= ", snvScore))
 
 snv_filt$genotype <- NA
 for (i in 1:length(geno_list)) {
@@ -177,9 +170,7 @@ group_by(snv_filt, genotype, treatment, sample) %>%
 
 ```
 
-### Triplet spectra
-
-I save the triplet spectra into the R10_2ndhalf_triplet.txt file.  
+### Triplet spectra 
 
 ```{r triplet.spectra, message = FALSE, fig.width = 20}
 nice_palette <- c("#E16A86", "#B88A00", "#50A315", "#00AD9A", "#009ADE", "#C86DD7")
@@ -326,8 +317,8 @@ insScore <- cins[ ,c(setdiff(treat_list$starting_clone, problematic), "treshold"
 ins_filt <- filter(ins, score > insScore)
 ins_filt$sample <- substr(ins_filt$X.sample_name, 0, 5)
 factor(ins_filt$sample, levels = sort(unique(snv$sample))) %>% 
-tabulate() %>% 
-barplot(las = 2, names.arg = sort(unique(snv$sample)), ylab = paste0("Number of insertions with score >= ", insScore))
+  tabulate() %>% 
+  barplot(las = 2, names.arg = sort(unique(snv$sample)), ylab = paste0("Number of insertions with score >= ", insScore))
 
 ins_filt$genotype <- NA
 for (i in 1:length(geno_list)) {
@@ -366,8 +357,8 @@ delScore <- cdel[ ,c(setdiff(treat_list$starting_clone, problematic), "treshold"
 del_filt <- filter(del, score > delScore)
 del_filt$sample <- substr(del_filt$X.sample_name, 0, 5) 
 factor(del_filt$sample, levels = sort(unique(snv$sample))) %>% 
-tabulate() %>% 
-barplot(las = 2, names.arg = sort(unique(snv$sample)), ylab = paste0("Number of deletions with score >= ", delScore))
+  tabulate() %>% 
+  barplot(las = 2, names.arg = sort(unique(snv$sample)), ylab = paste0("Number of deletions with score >= ", delScore))
 
 del_filt$genotype <- NA
 for (i in 1:length(geno_list)) {
@@ -412,7 +403,7 @@ filter(del_filt, treatment != "starting_clone") %>%
 
 ### Indel contexts
 
-The context files for the indels will contain four-four columns:
+The context files for the deletions and insertions will contain four columns each:
 
 * for the deletions: -50 to -2 bases; -1 base; deleted sequence; +1 to +50 bases; ie. the events is as long as the deletion
 * for the insertions: -50 to -2 bases; -1 base; inserted sequence; +1 to +50 bases; ie. the event is 0 bps long
@@ -468,8 +459,6 @@ with(del_context, ftable(Category ~ Genotype + Treatment))
 with(del_context, ftable(Category ~ Sample))
 write.table(del_context, file = paste0(file.path(outDir, outBase), "_deletion_context.csv"), quote = FALSE, row.names = FALSE)
 ```
-
-Separately for the keeping conditons and POLK.
 
 ```{r}
 filter(del_context,  Treatment != "starting_clone") %>% 
