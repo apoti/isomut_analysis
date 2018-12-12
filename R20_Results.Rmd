@@ -1,0 +1,489 @@
+---
+title: "R20_Results.Rmd"
+author: "Poti Adam"
+date: "12 December 2018"
+output: 
+    html_notebook:
+      fig.height: 5
+      fig.width: 10
+      highlight: zenburn
+      toc: yes
+      toc_float: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r setup2, warning = FALSE, message = FALSE}
+options(stringsAsFactors = FALSE)
+
+library(dplyr)
+library(reshape2)
+library(ggplot2)
+library(BSgenome.Ggallus.UCSC.galGal4)
+
+# most important user-defined variables: working directory, output base name and sample-specific genotype and treatment info
+# these are the only things you have to change for each Isomut run.
+
+outDir <- "20181211_isomut_output/"
+outBase <- "R20"
+# treatments
+treat_list <- list(
+starting_clone = c("DS041"),
+mock = c("DS042", "DS043", "DS044"),
+cisplatin_10uM_R3 = c("DS003", "DS048", "DS049"),
+cisplatin_10uM_R20= c("DS428", "DS429", "DS430"),
+cisplatin_7.5uM_R19 = c("DS419", "DS420", "DS421"),
+carboplatin_110uM_R19 = c("DS425", "DS426", "DS427"),
+carboplatin_75uM_R10 = c("DS260", "DS261", "DS262"),
+carboplatin_75uM_R20 = c("DS431", "DS432", "DS433"),
+oxaliplatin_4.5uM_R19 = c("DS422", "DS423", "DS424"),
+oxaliplatin_2.5uM_R10 = c("DS263", "DS264", "DS265"),
+oxaliplatin_2.5uM_R20 = c("DS434", "DS435", "DS436")
+)
+
+
+
+# genotypes
+geno_list <- list(
+  WT = c("DS434", "DS435", "DS436", "DS263", "DS264", "DS265", "DS422", "DS423", "DS424", "DS431", "DS432", "DS433", "DS260", "DS261", "DS262", "DS425", "DS426", "DS427", "DS428", "DS429", "DS430", "DS419", "DS420", "DS421", "DS003", "DS048", "DS049", "DS042", "DS043", "DS044", "DS041")
+)
+
+
+
+problematic <- c()
+```
+
+## Samples in this round
+
+
+
+## Isomut treshold selection { .tabset }
+
+First we need to select a treshold for the scores given by Isomut under which we don't believe an event to be a true mutation. A separate treshold have to be found for SNVs, insertions and deletions. The criteria are:
+
+* SNVs: the treshold is the minimal score that leaves at most 5 SNVs in any of the starting clone samples.
+* Insertions and deletions: the treshold is the minimal score that leaves at most 1 event in any of the starting clone samples.
+
+### SNVs
+
+```{r treshold.selection.snv}
+
+snv <- read.delim(file.path(outDir, "all_SNVs_after3rdround.isomut"))
+snv$sample <- substr(snv$X.sample_name, 0, 5)
+
+samplenum <- length(table(snv$X.sample_name))
+
+csnv <- matrix(0, ncol = samplenum, nrow = 301)
+for (i in 1:301) { csnv[i,] <- as.vector(tabulate(factor(filter(snv, score > (i-1)/10)$X.sample_name, levels = names(table(snv$X.sample_name))), nbins = samplenum)) }
+csnv <- data.frame(csnv, stringsAsFactors = FALSE)
+names(csnv) <- names(table(substr(snv$X.sample_name, 0, 5)))
+csnv$treshold <- seq(0, 30, by = 0.1)
+csnvm <- melt(csnv, id = "treshold")
+csnvm$status <- ifelse(csnvm$variable %in% setdiff(treat_list$starting_clone, problematic), "starting clone", "other")
+ggplot(data = csnvm, aes(x = treshold, y = log(value, base = 10), group = variable, color = status)) + geom_line() + ylab("log10 (Mutation number) ") + xlab("Score treshold") + geom_hline(yintercept = log10(5), linetype = 2)
+write.csv(csnv, paste0(file.path(outDir, outBase), "_snv_tresholds.csv"), quote = FALSE, row.names = FALSE) 
+```
+
+The treshold will be that lowest Fisher score that leaves less than 5 events in each starting clone samples. For SNVs, it is `r csnv[ ,c(setdiff(treat_list$starting_clone, problematic), "treshold")] %>% apply(1, function(x) ifelse(sum(x[1:length(setdiff(treat_list$starting_clone, problematic))] < 5) == length(setdiff(treat_list$starting_clone, problematic)), x[length(setdiff(treat_list$starting_clone, problematic)) + 1], NA)) %>% min(na.rm = TRUE)`. 
+
+### Insertions
+```{r treshold.selection.ins}
+indel <- read.delim(file.path(outDir, "all_indels.isomut"))
+indel$sample <- substr(indel$X.sample_name, 0, 5)
+
+samplenum <- length(table(indel$X.sample_name))
+
+ins <- filter(indel, type == "INS")
+cins <- matrix(0, ncol = samplenum, nrow = 201)
+for (i in 1:201) { cins[i,] <- as.vector(tabulate(factor(filter(ins, score > (i-1)/10)$X.sample_name, levels = names(table(ins$X.sample_name))), nbins = samplenum)) }
+cins <- data.frame(cins, stringsAsFactors = FALSE)
+names(cins) <- names(table(substr(indel$X.sample_name, 0, 5)))
+cins$treshold <- seq(0, 20, by = 0.1)
+cinsm <- melt(cins, id = "treshold")
+cinsm$status <- ifelse(cinsm$variable %in% setdiff(treat_list$starting_clone, problematic), "starting clone", "other")
+
+ggplot(data = cinsm, aes(x = treshold, y = log(value, base = 10), group = variable, color = status)) + geom_line() + ylab("log10 (Insertion number)") + xlab("Score treshold") + geom_hline(yintercept = log10(1), linetype = 2)
+write.csv(cins, paste0(file.path(outDir, outBase), "_ins_tresholds.csv"), quote = FALSE, row.names = FALSE) 
+```
+The treshold will be that lowest Fisher score that leaves at most 1 event in each starting clone samples. For insertions, it is `r cins[ ,c(setdiff(treat_list$starting_clone, problematic), "treshold")] %>% apply(1, function(x) ifelse(sum(x[1:length(setdiff(treat_list$starting_clone, problematic))] <= 1) == length(setdiff(treat_list$starting_clone, problematic)), x[length(setdiff(treat_list$starting_clone, problematic)) + 1], NA)) %>% min(na.rm = TRUE)`. 
+
+### Deletions
+
+```{r treshold.selection.del}
+indel <- read.delim(file.path(outDir, "all_indels.isomut"))
+indel$sample <- substr(indel$X.sample_name, 0, 5)
+
+del <- dplyr::filter(indel, type == "DEL")
+
+cdel <- matrix(0, ncol = samplenum, nrow = 201)
+for (i in 1:201) { cdel[i,] <- as.vector(tabulate(factor(filter(del, score > (i-1)/10)$X.sample_name, levels = names(table(del$X.sample_name))), nbins = samplenum)) }
+
+cdel <- data.frame(cdel, stringsAsFactors = FALSE)
+names(cdel) <- names(table(substr(indel$X.sample_name, 0, 5)))
+cdel$treshold <- seq(0, 20, by = 0.1)
+cdelm <- melt(cdel, id = "treshold")
+cdelm$status <- ifelse(cdelm$variable %in% setdiff(treat_list$starting_clone, problematic), "starting clone", "other")
+ggplot(data = cdelm, aes(x = treshold, y = log(value, base = 10), group = variable, color = status)) + geom_line() + ylab("log10 (Deletion number) ") + xlab("Score treshold") + geom_hline(yintercept = log10(1), linetype = 2)
+write.csv(cdel, paste0(file.path(outDir, outBase), "_del_tresholds.csv"), quote = FALSE, row.names = FALSE)
+```
+The treshold will be that lowest Fisher score that leaves at most 1 event in each starting clone samples. For deletions, it is `r cdel[ ,c(setdiff(treat_list$starting_clone, problematic), "treshold")] %>% apply(1, function(x) ifelse(sum(x[1:length(setdiff(treat_list$starting_clone, problematic))] <= 1) == length(setdiff(treat_list$starting_clone, problematic)), x[length(setdiff(treat_list$starting_clone, problematic)) + 1], NA)) %>% min(na.rm = TRUE)`. 
+
+## SNVs
+
+### SNV numbers
+
+First let's have a look on the total number of SNVs left after filtering for the Fisher score treshold. 
+
+```{r total.number.snv}
+snvScore <- csnv[ ,c(setdiff(treat_list$starting_clone, problematic), "treshold")] %>% 
+  apply(1, function(x) ifelse(sum(x[1:length(setdiff(treat_list$starting_clone, problematic))] < 5) == length(setdiff(treat_list$starting_clone, problematic)), x[length(setdiff(treat_list$starting_clone, problematic)) + 1], NA)) %>% 
+  min(na.rm = TRUE)
+
+snv_filt <- filter(snv, score > snvScore, chr != "MT")
+#DS434 is heavily contaminated. For now I just remove it from the dataset.
+snv_filt <- filter(snv_filt, sample != "DS434")
+snv_filt$sample <- substr(snv_filt$X.sample_name, 0, 5)
+factor(snv_filt$sample, levels = sort(unique(snv$sample))) %>% 
+tabulate() %>% 
+barplot(las = 2, names.arg = sort(unique(snv$sample)), ylab = paste0("Number of SNVs with score >= ", snvScore))
+
+snv_filt$genotype <- NA
+for (i in 1:length(geno_list)) {
+  snv_filt[which(snv_filt$sample %in% geno_list[[i]]), "genotype"] <- names(geno_list)[i]
+}
+
+snv_filt$treatment <- NA
+for (i in 1:length(treat_list)) {
+  snv_filt[which(snv_filt$sample %in% treat_list[[i]]), "treatment"] <- names(treat_list)[i]
+}
+
+
+snv_filt$treatment <- factor(snv_filt$treatment, levels = names(treat_list))
+snv_filt$genotype <- factor(snv_filt$genotype, levels = names(geno_list))
+
+group_by(snv_filt, genotype, treatment, sample) %>%
+  summarize(SNVnumber = n()) %>% 
+  as.data.frame()
+
+group_by(snv_filt, genotype, treatment, sample) %>%
+  summarize(SNVnumber = n()) %>% 
+  as.data.frame() %>%
+  group_by(genotype, treatment) %>%
+  summarize(SNVsum = sum(SNVnumber), SNVmean = mean(SNVnumber), SNVsem = sd(SNVnumber) / sqrt(n()), SNVsd = sd(SNVnumber)) %>% 
+  filter(treatment != "other", genotype != "other") %>%
+  ggplot(aes(x = genotype, fill = treatment, y = SNVmean)) + geom_bar(stat = 'identity', position = 'dodge', color = "black") + geom_errorbar(aes(ymin = SNVmean - SNVsem, ymax = SNVmean + SNVsem), position = position_dodge(width = 0.9), width = 0.5) + theme_bw() + ggtitle("Everything together")
+
+```
+
+### Triplet spectra
+
+I save the triplet spectra into the R10_2ndhalf_triplet.txt file.  
+
+```{r triplet.spectra, message = FALSE, fig.width = 20}
+nice_palette <- c("#E16A86", "#B88A00", "#50A315", "#00AD9A", "#009ADE", "#C86DD7")
+snv_filt$chr <- gsub("MT", "M", snv_filt$chr)
+snv_filt$chr <- factor(snv_filt$chr, levels = c(1:28, "W", "Z", "M"))
+snv_range <- GRanges(paste0("chr", snv_filt$chr), ranges = IRanges(snv_filt$pos - 1, end = snv_filt$pos + 1))
+snv_seq <- getSeq(Ggallus, snv_range)
+snv_filt$tripmut <- paste0(as.character(snv_seq), snv_filt$mut)
+tmp <- DNAStringSet(snv_filt$mut)
+snv_filt$tripmut96 <- ifelse((snv_filt$ref == "C" |snv_filt$ref == "T"), 
+                             snv_filt$tripmut, 
+                             paste0(unname(as.character(reverseComplement(snv_seq))), 
+                                   unname(as.character(reverseComplement(tmp)))
+                                   )
+                             )
+snv_filt$sorting=paste0(substr(snv_filt$tripmut96, 2, 2), 
+                 ">",
+                 substr(snv_filt$tripmut96, 4, 4),
+                 "::", 
+                 substr(snv_filt$tripmut96, 1, 1), 
+                 "_", 
+                 substr(snv_filt$tripmut96, 3, 3))
+
+
+snv_filt$sorting <- factor(snv_filt$sorting) 
+
+snv_spectra <- as.data.frame.matrix(table(snv_filt$sample, snv_filt$sorting))
+
+write.table(snv_spectra, paste0(file.path(outDir, outBase), "_triplet.csv"))
+paste0("mkdir ", outDir, "/spectrum_plots/") %>% system()
+for (i in 1:length(rownames(snv_spectra))) {
+  pdf(paste0(outDir, "/spectrum_plots/", rownames(snv_spectra)[i], ".pdf"), width = 10, height = 5) 
+  barplot(as.integer(snv_spectra[i,]), las = 2, names.arg = colnames(snv_spectra), cex.names = 0.8, col = rep(nice_palette, each = 16), main = rownames(snv_spectra)[i])
+  dev.off()
+}
+```
+
+### Triplet spectra aggregated by genotypes and treatments
+
+```{r}
+snv_spectra$Sample <- rownames(snv_spectra)
+snv_spectra$Genotype <- NA
+for (i in names(geno_list)) {
+  snv_spectra[which(snv_spectra$Sample %in% geno_list[[i]]), "Genotype"] <- i
+}
+snv_spectra$Treatment <- NA
+for (i in names(treat_list)) {
+  snv_spectra[which(snv_spectra$Sample %in% treat_list[[i]]), "Treatment"] <- i
+}
+
+group_by(snv_spectra, Genotype, Treatment) %>% 
+  summarize_at(vars(contains(">")), funs(mean)) %>%
+  as.data.frame() %>%
+  filter(Treatment != "starting_clone") -> tripAveByGT
+
+spaces <- rep(c(2, rep(0.4, 15)), 6)
+
+colors <- c(rgb(207/255, 19/255, 129/255), 
+           rgb(111/255, 53/255, 132/255),
+           rgb(90/255, 200/255, 209/255), 
+           rgb(44/255, 53/255, 138/255), 
+           rgb(20/255, 138/255, 76/255), 
+           rgb(253/255, 209/255, 45/255))
+
+trips <- colnames(tripAveByGT)[-c(1,2)] 
+trips <- paste0(substr(trips, 6, 6), substr(trips, 1, 1), substr(trips, 8, 8))
+
+dir.create(paste0(outDir, "/averaged_spectrum_plots/"))
+for (i in 1:nrow(tripAveByGT)) {
+  pdf(paste0(outDir, "/averaged_spectrum_plots/", paste(tripAveByGT[i,1:2], collapse = "_"), "_averaged.pdf"), width = 20, height = 7)
+  opar <- par()
+  par(mar = c(5.1, 7.1, 4.1, 2.1))
+  yscale <- c(0, max(as.numeric(tripAveByGT[i,3:98]))*1.2)
+  barplot(as.numeric(tripAveByGT[i,3:98]), 
+          main = paste(tripAveByGT[i,1:2], collapse = " "), 
+          col = rep(colors, each = 16), 
+          las = 2, 
+          names.arg = trips, 
+          cex.names = 1.3, 
+          space = spaces, 
+          cex.main = 2, 
+          ylim = yscale, 
+          border = NA, 
+          cex.axis = 1.6, 
+          family = "mono", 
+          lwd = 8)
+  for (j in 1:6) {
+    rect(xleft = 2 + (j-1) * (2 + (16*1 + 15*0.4)), ybottom = (par("usr")[4] - par("usr")[3]) * 0.97, xright = j * (15*1.4 + 2 + 1), ytop = par("usr")[4], col = colors[j], border = NA)
+    text(label = c("C>A", "C>G", "C>T", "T>A", "T>C", "T>G")[j], x = (j - 1) * (15*1.4 + 2) + j + 11.5, y = (par("usr")[4] - par("usr")[3]) * 0.93, cex = 2, font = 2, family = "mono")
+  }
+  dev.off()
+}
+
+```
+
+### Rainfall plots
+
+```{r waterfall}
+seqNames <- seqnames(Ggallus)[c(1:29, 31, 32)]
+seqLengths <-  seqlengths(Ggallus)[c(1:29, 31, 32)]
+cumulativeLengths <- Reduce(sum, seqLengths, accumulate = TRUE)
+genomeLength <- sum(seqLengths)
+
+normalizeGenomicPositions <- function(chr, pos) {
+  chr <- paste0("chr", chr)
+  pos <- as.numeric(pos)
+  whichChrom <- which(seqNames %in% chr)
+  earlierChromsLength <- sum(seqLengths[0:(whichChrom - 1)])
+  return(as.numeric(earlierChromsLength) + pos)
+}
+
+snv_filt <- arrange(snv_filt, sample, chr, pos) %>%
+  mutate(nextmut = c(pos[-1], NA) - pos,
+         nextmut = ifelse(nextmut < 0, NA, nextmut),
+         refalt = paste0(ref, ">", mut),
+         coloring = as.numeric(factor(substr(sorting, 0, 3), levels = c("C>A", "C>G", "C>T", "T>A", "T>C", "T>G"))))
+
+snv_filt$normPos <- apply(snv_filt, 1, function(x) normalizeGenomicPositions(x[2], x[3]))
+
+paste0("mkdir ", outDir, "/rainfall_plots/") %>% system()
+
+for (i in sort(unique(snv_filt$sample))) {
+  pdf(paste0(outDir, "/rainfall_plots/", i, ".pdf"), width = 10, height = 5) 
+  tmp <- filter(snv_filt, sample == i)
+  par(mar = c(6.1, 4.1, 4.1, 6.1), xpd = TRUE)
+  with(tmp, plot(x = normPos, y = log10(nextmut), xlim = c(1, genomeLength), main = i, ylab = "log10 of mutational distances", xlab = "Position along the genome", ylim = c(0, 8), col = nice_palette[coloring], pch = 16))
+  segments(x0 = cumulativeLengths, y0 = -0.1, y1 = 8.1, col = "grey70", lty = 2)
+  legend(x = "topright", legend = c("C>A", "C>G", "C>T", "T>A", "T>C", "T>G"), col = nice_palette, inset = c(-0.12, 0), pch = 15, cex = 1.2)
+  dev.off()
+}
+
+```
+
+
+## Short indels
+
+### Insertion numbers
+
+```{r total.number.ins}
+insScore <- cins[ ,c(setdiff(treat_list$starting_clone, problematic), "treshold")] %>% 
+  apply(1, function(x) ifelse(sum(x[1:length(setdiff(treat_list$starting_clone, problematic))] <= 1) == length(setdiff(treat_list$starting_clone, problematic)), x[length(setdiff(treat_list$starting_clone, problematic)) + 1], NA)) %>% 
+  min(na.rm = TRUE)
+
+ins_filt <- filter(ins, score > insScore)
+ins_filt$sample <- substr(ins_filt$X.sample_name, 0, 5)
+factor(ins_filt$sample, levels = sort(unique(snv$sample))) %>% 
+tabulate() %>% 
+barplot(las = 2, names.arg = sort(unique(snv$sample)), ylab = paste0("Number of insertions with score >= ", insScore))
+
+ins_filt$genotype <- NA
+for (i in 1:length(geno_list)) {
+  ins_filt[which(ins_filt$sample %in% geno_list[[i]]), "genotype"] <- names(geno_list)[i]
+}
+
+ins_filt$treatment <- NA
+for (i in 1:length(treat_list)) {
+  ins_filt[which(ins_filt$sample %in% treat_list[[i]]), "treatment"] <- names(treat_list)[i]
+}
+
+
+ins_filt$treatment <- factor(ins_filt$treatment, levels = names(treat_list))
+ins_filt$genotype <- factor(ins_filt$genotype, levels = names(geno_list))
+group_by(ins_filt, genotype, treatment, sample) %>%
+  summarize(INSnumber = n()) %>% 
+  as.data.frame()
+
+group_by(ins_filt, genotype, treatment, sample) %>%
+  summarize(INSnumber = n()) %>% 
+  as.data.frame() %>%
+  group_by(genotype, treatment) %>%
+  summarize(INSsum = sum(INSnumber), INSmean = mean(INSnumber), INSsem = sd(INSnumber) / sqrt(n()), INSsd = sd(INSnumber)) %>% 
+  filter(treatment != "other", genotype != "other") %>%
+  ggplot(aes(x = genotype, fill = treatment, y = INSmean)) + geom_bar(stat = 'identity', position = 'dodge', color = "black") + geom_errorbar(aes(ymin = INSmean - INSsem, ymax = INSmean + INSsem), position = position_dodge(width = 0.9), width = 0.5) + theme_bw()
+  
+```
+
+### Deletion numbers
+
+```{r total.number.del}
+delScore <- cdel[ ,c(setdiff(treat_list$starting_clone, problematic), "treshold")] %>% 
+  apply(1, function(x) ifelse(sum(x[1:length(setdiff(treat_list$starting_clone, problematic))] <= 1) == length(setdiff(treat_list$starting_clone, problematic)), x[length(setdiff(treat_list$starting_clone, problematic)) + 1], NA)) %>% 
+  min(na.rm = TRUE)
+
+del_filt <- filter(del, score > delScore)
+del_filt$sample <- substr(del_filt$X.sample_name, 0, 5) 
+factor(del_filt$sample, levels = sort(unique(snv$sample))) %>% 
+tabulate() %>% 
+barplot(las = 2, names.arg = sort(unique(snv$sample)), ylab = paste0("Number of deletions with score >= ", delScore))
+
+del_filt$genotype <- NA
+for (i in 1:length(geno_list)) {
+  del_filt[which(del_filt$sample %in% geno_list[[i]]), "genotype"] <- names(geno_list)[i]
+}
+
+del_filt$treatment <- NA
+for (i in 1:length(treat_list)) {
+  del_filt[which(del_filt$sample %in% treat_list[[i]]), "treatment"] <- names(treat_list)[i]
+}
+
+
+del_filt$treatment <- factor(del_filt$treatment, levels = names(treat_list))
+del_filt$genotype <- factor(del_filt$genotype, levels = names(geno_list))
+
+group_by(del_filt, genotype, treatment, sample) %>%
+  summarize(DELnumber = n()) %>% 
+  as.data.frame()
+
+group_by(del_filt, genotype, treatment, sample) %>%
+  summarize(DELnumber = n()) %>% 
+  as.data.frame() %>%
+  group_by(genotype, treatment) %>%
+  summarize(DELsum = sum(DELnumber), DELmean = mean(DELnumber), DELsem = sd(DELnumber) / sqrt(n()), DELsd = sd(DELnumber)) %>% 
+  filter(treatment != "other", genotype != "other") %>%
+  ggplot(aes(x = genotype, fill = treatment, y = DELmean)) + geom_bar(stat = 'identity', position = 'dodge', color = "black") + geom_errorbar(aes(ymin = DELmean - DELsem, ymax = DELmean + DELsem), position = position_dodge(width = 0.9), width = 0.5) + theme_bw()
+```
+
+### Length distributions
+
+Length distributions will be saved for each sample analyzed in this run of Isomut separately for insertions and deletions.
+
+```{r indel.lengths}
+with(ins_filt, table(sample, nchar(mut))) %>% write.table(file = paste0(file.path(outDir, outBase), "_insertion_lengths.csv"), quote = FALSE)
+with(del_filt, table(sample, nchar(ref))) %>% write.table(file = paste0(file.path(outDir, outBase), "_deletion_lengths.csv"), quote = FALSE)
+
+del_filt$ref <- as.character(del_filt$ref)
+filter(del_filt, treatment != "starting_clone") %>%
+  mutate(dellength = nchar(ref)) %>%
+  ggplot() + stat_ecdf(aes(x = log10(dellength), color = paste(genotype, treatment))) + theme_bw() + xlab("log10 (length of deletion)") + ylab("Cumulative fraction") + scale_color_discrete(name = "Group") + ggtitle("Cumulative distribution of log10 deletion lengths")
+```
+
+### Indel contexts
+
+The context files for the indels will contain four-four columns:
+
+* for the deletions: -50 to -2 bases; -1 base; deleted sequence; +1 to +50 bases; ie. the events is as long as the deletion
+* for the insertions: -50 to -2 bases; -1 base; inserted sequence; +1 to +50 bases; ie. the event is 0 bps long
+
+```{r indel.context}
+#for the filtered insertions belonging to R10 samples
+ins_r8b <- ins_filt
+
+with(ins_r8b, GRanges(paste0("chr", chr), ranges = IRanges(pos - 50, end = pos + 50))) %>%
+  getSeq(Ggallus, .) %>%
+  as.character() -> ins_cont
+
+ins_context <- data.frame(Sample = ins_r8b$sample, Chr = ins_r8b$chr, Pos = ins_r8b$pos, Prev50to2 = substr(ins_cont, 1, 50), Prev1 = substr(ins_cont, 51, 51), Inserted = ins_r8b$mut, Next50 = substr(ins_cont, 52, 101))
+write.table(ins_context, file = paste0(file.path(outDir, outBase), "_insertion_context.csv"), quote = FALSE, row.names = FALSE)
+
+#for the filtered deletions belonging to R10 samples
+del_r8b <- del_filt 
+
+with(del_r8b, GRanges(paste0("chr", chr), ranges = IRanges(pos + nchar(as.character(ref)) + 1, end = pos + nchar(as.character(ref)) + 50))) %>%
+  getSeq(Ggallus, .) %>%
+  as.character() -> del_after
+with(del_r8b, GRanges(paste0("chr", chr), ranges = IRanges(pos - 50, end = pos))) %>%
+  getSeq(Ggallus, .) %>%
+  as.character() -> del_before
+
+del_context <- data.frame(Sample = del_r8b$sample, Genotype = del_r8b$genotype, Treatment = del_r8b$treatment, Chr = del_r8b$chr, Pos = del_r8b$pos, Prev50to2 = substr(del_before, 1, 50), Prev1 = substr(del_before, 51, 51), Deleted = del_r8b$ref, Next50 = del_after)
+```
+
+```{r del.categories}
+delClassifier <- function(deleted, upstream) {
+  if (length(deleted) != length(upstream)) {
+    print("Sequence vectors have to be of equal length!")
+  }
+  ret <- vector(length = length(deleted))
+  deleted <- as.character(deleted)
+  upstream <- as.character(upstream)
+  for (i in 1:length(deleted)) {
+    ret[i] <- ifelse(
+      substr(upstream[i], 1, nchar(deleted[i])) == deleted[i],
+      "repeat",
+      ifelse(
+        substr(upstream[i], 1, 1) == substr(deleted[i], 1, 1),
+        "homology",
+        "no homology"
+      )
+    )
+  }
+  return(ret)
+}
+
+del_context$Category <- with(del_context, delClassifier(Deleted, Next50))
+with(del_context, ftable(Category ~ Genotype + Treatment))
+with(del_context, ftable(Category ~ Sample))
+write.table(del_context, file = paste0(file.path(outDir, outBase), "_deletion_context.csv"), quote = FALSE, row.names = FALSE)
+```
+
+Separately for the keeping conditons and POLK.
+
+```{r}
+filter(del_context,  Treatment != "starting_clone") %>% 
+  group_by(Sample, Genotype, Treatment, Category) %>% 
+  summarize(Sum = n()) %>%
+  group_by(Treatment, Category) %>% 
+  summarize(Mean = mean(Sum), SEM = sd(Sum) / sqrt(n())) %>% 
+  ggplot(aes(x = gsub(" ", "\n", Treatment), y = Mean, fill = Category)) + geom_bar(stat = 'identity', position = position_dodge()) + geom_errorbar(aes(ymin = Mean - SEM, ymax = Mean + SEM), position = position_dodge(width = 0.9), width = 0.5) + theme_bw() + xlab("") + ylab("Count") + ggtitle("Means and SEMs of deletion categories") + theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))
+
+filter(del_context, Genotype != "POLK", Treatment != "starting_clone") %>% 
+  ggplot(aes(x = Treatment, y = nchar(Deleted), group = Category, color = Category)) + geom_point(position = position_jitterdodge(jitter.width = 0.2, jitter.height = 0.5, dodge.width = 0.7)) + theme_minimal() + ylab("Length of deletions") + xlab("Genotype") + ggtitle("Categories and lengths together") + theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))
+```
+
+
+
+
+
